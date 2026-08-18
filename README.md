@@ -113,9 +113,14 @@ The plugin handles mixed JSON payloads — strings, raw HTML, flat arrays, neste
 ```
 [og_html key="body_html"]
 [og_html key="intro_html"]
+[og_html key="body_html" read_more="true"]
+[og_html key="body_html" read_more="true" read_more_label="Continue reading"]
 ```
 
 Rendered through `wp_kses_post()` — safe HTML tags are preserved, dangerous ones stripped.
+
+- `read_more` *(optional)* — `"true"` splits the HTML into `<p>` paragraphs, shows only the first, and collapses the rest behind a click-to-expand `.og-readmore__toggle` link. No-ops (returns the full HTML) if there's zero or one paragraph to begin with.
+- `read_more_label` *(optional)* — text for the toggle link. Default: `"Read more..."`.
 
 ---
 
@@ -141,6 +146,41 @@ Rendered through `wp_kses_post()` — safe HTML tags are preserved, dangerous on
 
 - `headers` — comma-separated column labels; defaults to object keys from the first row
 - `class` — CSS class on `<table>` (default: `og-table`)
+
+---
+
+### `[og_links]` — array of objects as a link list
+
+For arrays where each item's link/label live in nested fields - `og_list` would
+JSON-dump the objects as text, and `og_table` has no way to reach nested fields
+for its cells:
+
+```
+[og_links key="resources"]
+[og_links key="resources" href_field="link.value" label_field="type.name" label_fallback_field="name"]
+```
+
+Given:
+
+```json
+{
+  "resources": [
+    { "name": "Hopewell Baptist - Cemetery", "link": { "value": "https://findagrave.com/..." }, "type": { "name": "Cemetery" } },
+    { "name": "Hopewell Baptist - 3D Tour",  "link": { "value": "https://matterport.com/..." }, "type": { "name": "3D Tour" } }
+  ]
+}
+```
+
+renders a `<ul>` of `<a>` links, one per item, skipping any item whose
+`href_field` doesn't resolve to a string.
+
+- `href_field` — dot-notation path *within each item* to the URL (default: `link.value`)
+- `label_field` — dot-notation path *within each item* to the link text (default: `name`)
+- `label_fallback_field` *(optional)* — tried if `label_field` is empty/missing before falling back to the URL itself
+- `class` — CSS class on the `<ul>` (default: `og-links`)
+- `item_class` *(optional)* — CSS class on each `<li>`
+- `target` — default `_blank`; set `target=""` to open in the same tab
+- `fallback` — text shown when the key is missing, not an array, or no item resolves a valid href
 
 ---
 

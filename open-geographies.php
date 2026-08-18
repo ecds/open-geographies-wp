@@ -4,7 +4,7 @@
  * Plugin Name:       Open Geographies
  * Plugin URI:        https://github.com/ecds/open-geographies-wp
  * Description:       Fetches data from an Open Geographies compliant API based on the current URL path and exposes response fields via shortcodes.
- * Version:           0.0.3
+ * Version:           0.0.4
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            Your Name
@@ -20,7 +20,7 @@ defined('ABSPATH') || exit;
 // 1.  Bootstrap
 // ─────────────────────────────────────────────
 
-define('OG_VERSION',    '0.0.3');
+define('OG_VERSION',    '0.0.4');
 define('OG_OPTION_KEY', 'og_settings');
 define('OG_CACHE_TTL',  60);
 define('OG_CRON_HOOK',  'og_sync_cron');
@@ -55,6 +55,7 @@ class Open_Geographies
         add_shortcode('og_html',    [__CLASS__, 'sc_html']);
         add_shortcode('og_list',    [__CLASS__, 'sc_list']);
         add_shortcode('og_table',   [__CLASS__, 'sc_table']);
+        add_shortcode('og_links',   [__CLASS__, 'sc_links']);
         add_shortcode('og_json',    [__CLASS__, 'sc_json']);
         add_shortcode('og_if',      [__CLASS__, 'sc_if']);
         add_shortcode('og_data',    [__CLASS__, 'sc_data']);
@@ -541,7 +542,18 @@ class Open_Geographies
     {
         self::fetch_payload();
         if (self::$payload === null) return null;
-        $cursor = self::$payload;
+        return self::resolve_in(self::$payload, $key);
+    }
+
+    /**
+     * Same dot-notation walk as resolve(), but against an arbitrary array rather
+     * than the request-wide payload. Used to reach into fields of individual
+     * items from an array (e.g. each object in a `resources` list), where the
+     * dot-path is relative to that item rather than to the top-level response.
+     */
+    private static function resolve_in(array $data, string $key): mixed
+    {
+        $cursor = $data;
         foreach (explode('.', $key) as $part) {
             if (is_array($cursor) && array_key_exists($part, $cursor)) {
                 $cursor = $cursor[$part];
@@ -572,10 +584,47 @@ class Open_Geographies
 
     public static function sc_html(array $atts): string
     {
-        $atts  = shortcode_atts(['key' => '', 'fallback' => ''], $atts);
+        $atts = shortcode_atts([
+            'key'             => '',
+            'fallback'        => '',
+            'read_more'       => 'false',
+            'read_more_label' => __('Read more...', 'open-geographies'),
+        ], $atts);
+
         $value = self::resolve($atts['key']);
         if ($value === null || is_array($value)) return wp_kses_post($atts['fallback']);
-        return wp_kses_post((string) $value);
+        $html = wp_kses_post((string) $value);
+
+        if (! filter_var($atts['read_more'], FILTER_VALIDATE_BOOLEAN)) {
+            return $html;
+        }
+
+        return self::wrap_read_more($html, $atts['read_more_label']);
+    }
+
+    /**
+     * Splits HTML into <p> paragraphs, leaves the first one visible, and collapses the
+     * rest behind a click-to-reveal toggle. Falls back to returning $html unchanged if
+     * there's only one paragraph (or none) to begin with — nothing to collapse.
+     */
+    private static function wrap_read_more(string $html, string $label): string
+    {
+        preg_match_all('/<p[^>]*>.*?<\/p>/is', $html, $matches);
+        $paragraphs = ! empty($matches[0]) ? $matches[0] : [$html];
+
+        if (count($paragraphs) <= 1) {
+            return $html;
+        }
+
+        $first = array_shift($paragraphs);
+        $rest  = implode('', $paragraphs);
+
+        return sprintf(
+            '<div class="og-html og-readmore">%1$s<a href="javascript:void(0)" class="og-readmore__toggle" onclick="this.style.display=\'none\';this.nextElementSibling.style.display=\'block\';">%2$s</a><div class="og-readmore__rest" style="display:none;">%3$s</div></div>',
+            $first,
+            esc_html($label),
+            $rest
+        );
     }
 
     public static function sc_list(array $atts): string
@@ -610,6 +659,60 @@ class Open_Geographies
             $body .= '<tr>' . $cells . '</tr>';
         }
         return sprintf('<table class="%s"><thead><tr>%s</tr></thead><tbody>%s</tbody></table>', esc_attr($atts['class']), $th, $body);
+    }
+
+    /**
+     * [og_links key="resources" href_field="link.value" label_field="type.name"]
+     * Array of objects rendered as a <ul> of <a> links - for cases like a
+     * `resources` array where og_list would just JSON-dump each object and
+     * og_table has no way to reach nested fields for its cells.
+     */
+    public static function sc_links(array $atts): string
+    {
+        $atts = shortcode_atts([
+            'key'                  => '',
+            'href_field'           => 'link.value',
+            'label_field'          => 'name',
+            'label_fallback_field' => '',
+            'class'                => 'og-links',
+            'item_class'           => '',
+            'target'               => '_blank',
+            'fallback'             => '',
+        ], $atts);
+
+        $items = self::resolve($atts['key']);
+        if (! is_array($items) || empty($items)) return esc_html($atts['fallback']);
+
+        $rows = '';
+        foreach ($items as $item) {
+            if (! is_array($item)) continue;
+
+            $href = self::resolve_in($item, $atts['href_field']);
+            if (empty($href) || ! is_string($href)) continue;
+
+            $label = self::resolve_in($item, $atts['label_field']);
+            if ((empty($label) || is_array($label)) && $atts['label_fallback_field'] !== '') {
+                $label = self::resolve_in($item, $atts['label_fallback_field']);
+            }
+            if (empty($label) || is_array($label)) {
+                $label = $href;
+            }
+
+            $target_attr = $atts['target'] !== '' ? ' target="' . esc_attr($atts['target']) . '" rel="noopener"' : '';
+            $item_class  = $atts['item_class'] !== '' ? ' class="' . esc_attr($atts['item_class']) . '"' : '';
+
+            $rows .= sprintf(
+                '<li%1$s><a href="%2$s"%3$s>%4$s</a></li>',
+                $item_class,
+                esc_url((string) $href),
+                $target_attr,
+                esc_html((string) $label)
+            );
+        }
+
+        if (empty($rows)) return esc_html($atts['fallback']);
+
+        return sprintf('<ul class="%s">%s</ul>', esc_attr($atts['class']), $rows);
     }
 
     public static function sc_json(array $atts): string
@@ -969,9 +1072,10 @@ class Open_Geographies
         $docs = [
             '[og_field key="title"]'                            => 'Plain-text string. Dot-notation supported. Optional <code>fallback</code>.',
             '[og_element key="title" tag="h1" class="hero"]'   => 'Plain-text string wrapped in any HTML element.',
-            '[og_html key="description.value"]'                 => 'Raw HTML string, sanitized with <code>wp_kses_post()</code>.',
+            '[og_html key="description.value"]'                 => 'Raw HTML string, sanitized with <code>wp_kses_post()</code>. Add <code>read_more="true"</code> to show only the first <code>&lt;p&gt;</code> with a click-to-expand toggle for the rest (optional <code>read_more_label</code>).',
             '[og_list key="tags"]'                              => 'Flat array as <code>&lt;ul&gt;</code>. Add <code>ordered="true"</code> for <code>&lt;ol&gt;</code>.',
             '[og_table key="rows"]'                             => 'Array of objects as <code>&lt;table&gt;</code>. Optional <code>headers="A,B,C"</code>.',
+            '[og_links key="resources" href_field="link.value" label_field="type.name"]' => 'Array of objects as a <code>&lt;ul&gt;</code> of links. <code>href_field</code>/<code>label_field</code> support dot-notation into each item. Optional <code>label_fallback_field</code>, <code>target</code> (default <code>_blank</code>), <code>item_class</code>.',
             '[og_json key="meta"]'                              => 'Pretty-printed JSON in a <code>&lt;pre&gt;</code>. Dev use only.',
             '[og_if key="is_active"]…[/og_if]'                 => 'Conditional block. Add <code>equals="x"</code> or <code>not="true"</code>.',
             '[og_data var="photos" key="gallery"]'              => 'Writes a JS variable for use in Custom HTML blocks.',
