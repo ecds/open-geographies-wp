@@ -4,7 +4,7 @@
  * Plugin Name:       Open Geographies
  * Plugin URI:        https://github.com/ecds/open-geographies-wp
  * Description:       Fetches data from an Open Geographies compliant API based on the current URL path and exposes response fields via shortcodes.
- * Version:           0.0.2
+ * Version:           0.0.3
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            Your Name
@@ -20,7 +20,7 @@ defined('ABSPATH') || exit;
 // 1.  Bootstrap
 // ─────────────────────────────────────────────
 
-define('OG_VERSION',    '0.0.1');
+define('OG_VERSION',    '0.0.3');
 define('OG_OPTION_KEY', 'og_settings');
 define('OG_CACHE_TTL',  60);
 define('OG_CRON_HOOK',  'og_sync_cron');
@@ -60,6 +60,7 @@ class Open_Geographies
         add_shortcode('og_data',    [__CLASS__, 'sc_data']);
         add_shortcode('og_image',   [__CLASS__, 'sc_image']);
         add_shortcode('og_gallery', [__CLASS__, 'sc_gallery']);
+        add_shortcode('og_map',     [__CLASS__, 'sc_map']);
         add_shortcode('og_error',   [__CLASS__, 'sc_error']);
 
         add_action('wp_enqueue_scripts',  [__CLASS__, 'enqueue_swiper']);
@@ -139,6 +140,12 @@ class Open_Geographies
             'auth_header' => [
                 'label'       => __('Authorization Header Value', 'open-geographies'),
                 'description' => __('Optional. e.g. <code>Bearer my-secret-token</code>.', 'open-geographies'),
+                'type'        => 'text',
+                'section'     => 'og_main_section',
+            ],
+            'google_maps_api_key' => [
+                'label'       => __('Google Maps API Key', 'open-geographies'),
+                'description' => __('Used by <code>[og_map]</code> to render GeoJSON Point geometries. This key is exposed client-side in page source, so restrict it by HTTP referrer in the Google Cloud Console.', 'open-geographies'),
                 'type'        => 'text',
                 'section'     => 'og_main_section',
             ],
@@ -321,6 +328,7 @@ class Open_Geographies
             'endpoint'          => esc_url_raw(trim($input['endpoint']          ?? '')),
             'request_timeout'   => absint($input['request_timeout']              ?? 10) ?: 10,
             'auth_header'       => sanitize_text_field($input['auth_header']     ?? ''),
+            'google_maps_api_key' => sanitize_text_field($input['google_maps_api_key'] ?? ''),
             'cache_ttl'         => absint($input['cache_ttl']                    ?? OG_CACHE_TTL),
             'error_message'     => sanitize_text_field($input['error_message']   ?? ''),
             'enable_logging'    => ! empty($input['enable_logging']) ? 1 : 0,
@@ -726,6 +734,96 @@ class Open_Geographies
                 }
             })();
         </script>
+    <?php
+        return ob_get_clean();
+    }
+
+    public static function sc_map(array $atts): string
+    {
+        static $counter = 0;
+
+        $atts = shortcode_atts([
+            'key'          => '',
+            'zoom'         => '14',
+            'height'       => '400px',
+            'width'        => '100%',
+            'class'        => '',
+            'marker_title' => '',
+            'fallback'     => '',
+        ], $atts);
+
+        if ($atts['key'] === '') return '';
+
+        $geometry = self::resolve($atts['key']);
+        $coords   = is_array($geometry) ? ($geometry['coordinates'] ?? null) : null;
+
+        if (
+            ! is_array($geometry)
+            || ($geometry['type'] ?? '') !== 'Point'
+            || ! is_array($coords)
+            || ! isset($coords[0], $coords[1])
+            || ! is_numeric($coords[0])
+            || ! is_numeric($coords[1])
+        ) {
+            return esc_html($atts['fallback']);
+        }
+
+        // GeoJSON coordinates are [longitude, latitude] — Google Maps wants {lat, lng}.
+        [$lng, $lat] = $coords;
+
+        $settings = self::get_settings();
+        $api_key  = trim((string) ($settings['google_maps_api_key'] ?? ''));
+
+        if ($api_key === '') {
+            return current_user_can('manage_options')
+                ? esc_html__('Google Maps: no API key configured under Settings → Open Geographies.', 'open-geographies')
+                : esc_html($atts['fallback']);
+        }
+
+        $marker_title = $atts['marker_title'] !== '' ? (string) (self::resolve($atts['marker_title']) ?? '') : '';
+
+        $inline_script = self::enqueue_google_maps_assets($api_key);
+
+        $counter++;
+        $id = 'og-map-' . $counter;
+
+        $config = [
+            'lat'   => (float) $lat,
+            'lng'   => (float) $lng,
+            'zoom'  => (int) $atts['zoom'],
+            'title' => $marker_title,
+        ];
+
+        ob_start();
+    ?>
+        <?php echo $inline_script; ?>
+        <div class="<?php echo esc_attr(trim('og-map ' . $atts['class'])); ?>" id="<?php echo esc_attr($id); ?>" style="height:<?php echo esc_attr($atts['height']); ?>;width:<?php echo esc_attr($atts['width']); ?>;"></div>
+        <script>
+            (function() {
+                function initOgMap() {
+                    var el = document.getElementById(<?php echo wp_json_encode($id); ?>);
+                    var cfg = <?php echo wp_json_encode($config, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+                    var center = {
+                        lat: cfg.lat,
+                        lng: cfg.lng
+                    };
+                    var map = new google.maps.Map(el, {
+                        center: center,
+                        zoom: cfg.zoom
+                    });
+                    new google.maps.Marker({
+                        position: center,
+                        map: map,
+                        title: cfg.title || undefined
+                    });
+                }
+                if (window.google && window.google.maps) {
+                    initOgMap();
+                } else {
+                    document.addEventListener('og-google-maps-loaded', initOgMap);
+                }
+            })();
+        </script>
 <?php
         return ob_get_clean();
     }
@@ -792,6 +890,40 @@ class Open_Geographies
         return sprintf('<link rel="stylesheet" id="swiper-css" href="%s">' . "\n", esc_url('https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css'));
     }
 
+    // ── Google Maps ────────────────────────────
+
+    /**
+     * Registers/enqueues the Google Maps JS API, keyed to the configured API key. Always
+     * called from within sc_map() itself (never from a content-scanning hook) so it fires
+     * regardless of whether the shortcode came from post content, a template, or a widget —
+     * see the equivalent Swiper fix above for why that distinction matters.
+     *
+     * Uses Google's own `callback` query param rather than defer/DOMContentLoaded timing:
+     * the callback fires exactly when the API is ready, no matter how the script tag loads.
+     */
+    private static function enqueue_google_maps_assets(string $api_key): string
+    {
+        if (wp_script_is('og-google-maps', 'enqueued')) return '';
+
+        $src = add_query_arg([
+            'key'      => $api_key,
+            'loading'  => 'async',
+            'callback' => 'ogMapsLoaded',
+        ], 'https://maps.googleapis.com/maps/api/js');
+
+        wp_register_script('og-google-maps', $src, [], null, ['strategy' => 'defer', 'in_footer' => true]);
+        wp_add_inline_script('og-google-maps', "window.ogMapsLoaded = function () { document.dispatchEvent(new Event('og-google-maps-loaded')); };", 'before');
+        wp_enqueue_script('og-google-maps');
+
+        if (! did_action('wp_head')) return '';
+
+        // wp_head already printed for this request, so the enqueue above will never get
+        // flushed via the normal hook — print the script (and its "before" callback) directly.
+        ob_start();
+        wp_print_scripts(['og-google-maps']);
+        return ob_get_clean();
+    }
+
     // ── Helpers ───────────────────────────────
 
     public static function get_settings(): array
@@ -845,6 +977,7 @@ class Open_Geographies
             '[og_data var="photos" key="gallery"]'              => 'Writes a JS variable for use in Custom HTML blocks.',
             '[og_image key="images.hero" alt_key="images.alt"]' => 'Renders an <code>&lt;img&gt;</code> from an API URL.',
             '[og_gallery key="photographs"]'                    => 'Renders a Swiper gallery from an array of image URLs or objects. Options: <code>src_field</code>, <code>alt_field</code> (default <code>src</code>/<code>alt</code>), <code>loop</code>, <code>pagination</code>, <code>navigation</code>, <code>autoplay</code> (ms), <code>class</code>, <code>fallback</code>.',
+            '[og_map key="geometry"]'                           => 'Renders a Google Map with a marker from a GeoJSON Point geometry. Requires a Google Maps API key under Settings. Options: <code>zoom</code>, <code>height</code>, <code>width</code>, <code>marker_title</code> (a key path for the marker tooltip), <code>class</code>, <code>fallback</code>.',
             '[og_error]'                                        => 'Displays the API error message when the fetch fails.',
         ];
         echo '<table class="widefat striped" style="max-width:900px"><thead><tr><th>Shortcode</th><th>Description</th></tr></thead><tbody>';
