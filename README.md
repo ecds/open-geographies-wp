@@ -55,6 +55,7 @@ The plugin takes the **last path segment** of the current request URI and append
 | **API Base Endpoint** | Full base URL, e.g. `https://api.example.com/v1/pages` |
 | **Request Timeout** | Seconds before giving up. Default: `10` |
 | **Authorization Header Value** | Sent as the `Authorization` HTTP header, e.g. `Bearer abc123` |
+| **Google Maps API Key** | Required by `[og_map]`. Exposed client-side in page source — restrict it by HTTP referrer in the [Google Cloud Console](https://console.cloud.google.com/google/maps-apis/credentials). |
 | **Cache TTL** | Seconds to cache responses via WordPress transients. Set to `0` to disable. |
 | **Custom Error Message** | Shown to visitors if the API call fails |
 
@@ -212,6 +213,37 @@ Renders a complete [Swiper](https://swiperjs.com/) gallery — slides, paginatio
 | `fallback` | *(empty)* | Text shown when the key is missing, not an array, or empty |
 
 Each gallery on a page gets a unique `#og-gallery-N` id, so multiple `[og_gallery]` instances can coexist on the same page/post.
+
+---
+
+### `[og_map]` — Google Map from a GeoJSON Point
+
+```
+[og_map key="geometry"]
+[og_map key="geometry" zoom="16" height="300px" marker_title="title"]
+```
+
+Renders a Google Map with a single marker from a GeoJSON `Point` geometry:
+
+```json
+{
+  "geometry": {
+    "type": "Point",
+    "coordinates": [-85.2830713, 34.0866871]
+  }
+}
+```
+
+- `key` — dot-notation path to the geometry object (required). Must resolve to `{"type": "Point", "coordinates": [lng, lat]}` — GeoJSON orders coordinates as `[longitude, latitude]`, which this shortcode converts to the `{lat, lng}` Google Maps expects.
+- `zoom` — default `14`
+- `height` / `width` — CSS values for the map container, default `400px` / `100%`
+- `marker_title` — *(optional)* a dot-notation key path (not literal text) whose value is used as the marker's hover tooltip, e.g. `marker_title="title"`
+- `class` — extra CSS class(es) on the map container (in addition to `og-map`)
+- `fallback` — text shown when the key is missing, isn't a `Point`, or no API key is configured
+
+Requires a **Google Maps API Key** under *Settings → Open Geographies* (see Settings above). Without one configured, the shortcode shows a configuration warning to logged-in admins and falls back to `fallback` text for everyone else — it never tries to load Maps with a blank key. Note that Google requires a billing-enabled Cloud project to use the Maps JavaScript API, even within the free monthly usage tier.
+
+Like `[og_gallery]`, this needs no template markup — the shortcode outputs its own container and loads the Google Maps JS API automatically wherever it's used.
 
 ---
 
