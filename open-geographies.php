@@ -681,6 +681,8 @@ class Open_Geographies
         $slides = array_values(array_filter($slides, fn($s) => $s['src'] !== ''));
         if (empty($slides)) return esc_html($atts['fallback']);
 
+        $inline_style = self::enqueue_swiper_assets();
+
         $counter++;
         $id = 'og-gallery-' . $counter;
 
@@ -699,6 +701,7 @@ class Open_Geographies
 
         ob_start();
     ?>
+        <?php echo $inline_style; ?>
         <div class="<?php echo esc_attr(trim('swiper og-gallery ' . $atts['class'])); ?>" id="<?php echo esc_attr($id); ?>">
             <div class="swiper-wrapper">
                 <?php foreach ($slides as $slide) : ?>
@@ -763,8 +766,30 @@ class Open_Geographies
 
         if (! is_singular('og_item') && ! $has_gallery) return;
 
+        self::enqueue_swiper_assets();
+    }
+
+    /**
+     * Registers/enqueues the Swiper assets. Called eagerly on wp_enqueue_scripts when the
+     * shortcode is detectable in post_content, and again from sc_gallery() itself as a
+     * guarantee for shortcodes rendered from templates, widgets, or reusable blocks that
+     * has_shortcode() above can't see. The JS is safe to enqueue late (in_footer + defer),
+     * but if wp_head has already printed, a late style enqueue would never get flushed —
+     * in that case we return an inline <link> tag for sc_gallery() to output directly.
+     */
+    private static function enqueue_swiper_assets(): string
+    {
+        if (! wp_script_is('swiper', 'enqueued')) {
+            wp_enqueue_script('swiper', 'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js', [], '11', ['strategy' => 'defer', 'in_footer' => true]);
+        }
+
+        if (wp_style_is('swiper', 'enqueued')) return '';
+
         wp_enqueue_style('swiper', 'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css', [], '11');
-        wp_enqueue_script('swiper', 'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js',  [], '11', ['strategy' => 'defer', 'in_footer' => true]);
+
+        if (! did_action('wp_head')) return '';
+
+        return sprintf('<link rel="stylesheet" id="swiper-css" href="%s">' . "\n", esc_url('https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css'));
     }
 
     // ── Helpers ───────────────────────────────
