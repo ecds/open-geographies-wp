@@ -217,16 +217,18 @@ Renders a `<pre>` block with pretty-printed JSON. Remove from production templat
 
 ---
 
-### `[og_gallery]` — Swiper image gallery
+### `[og_gallery]` — scrollable thumbnail strip + GLightbox
 
 ```
 [og_gallery key="photographs"]
-[og_gallery key="photographs" loop="false" navigation="false" autoplay="4000"]
+[og_gallery key="photographs" loop="false" navigation="false"]
 ```
 
-Renders a complete [Swiper](https://swiperjs.com/) gallery — slides, pagination dots, and prev/next arrows — directly from an API array. No template markup or inline `<script>` needed; the shortcode outputs the full `.swiper` structure and its own scoped init script, and the plugin automatically enqueues the Swiper JS/CSS on any page where this shortcode is used (or on `og_item` singles).
+Renders a plain horizontally-scrollable strip of thumbnails — no carousel library, just CSS `overflow-x` plus two scroll-arrow buttons that page the strip by roughly one screenful at a time. No template markup or inline `<script>` needed; the shortcode outputs its own container and scoped init script.
 
-Clicking a slide opens it in a full-screen [GLightbox](https://biati-digital.github.io/glightbox/) modal, so visitors can keep browsing (next/prev, swipe, arrow keys) without leaving it. This is a second library rather than reusing the same Swiper instance on purpose — GLightbox is purpose-built for exactly this click-to-open-a-modal pattern, whereas getting a *second*, dynamically-constructed Swiper instance to reliably open positioned at an arbitrary slide (inside a container that was `display:none` a moment earlier) turned out to be genuinely unreliable. The plugin enqueues GLightbox's JS/CSS from CDN alongside Swiper's, the same way. Disable with `lightbox="false"` if you just want the inline carousel.
+Clicking a thumbnail opens a full-screen [GLightbox](https://biati-digital.github.io/glightbox/) modal, so visitors can keep browsing (next/prev, swipe, arrow keys) without leaving it. The plugin enqueues GLightbox's JS/CSS from CDN on any page where this shortcode is used (or on `og_item` singles). Disable with `lightbox="false"` if you just want the plain scrollable strip with no click-to-enlarge.
+
+*(This previously rendered a [Swiper](https://swiperjs.com/) carousel for the inline strip too, with a second Swiper instance for the modal. Swiper's gone now — the actual design called for a plain scrollable row, not a carousel, and a dynamically-constructed second Swiper instance for the modal turned out to be unreliable in practice: an instance built the instant its container becomes visible doesn't reliably track its own slides. GLightbox doesn't have that problem — it's purpose-built for exactly the click-to-open-a-modal pattern.)*
 
 `key` must resolve to an array of either:
 
@@ -249,11 +251,9 @@ Clicking a slide opens it in a full-screen [GLightbox](https://biati-digital.git
 | `alt_field` | `alt` | Object key to read the alt text from |
 | `lightbox_src_field` | *(= `src_field`)* | Object key to read a higher-resolution image from for the GLightbox modal, e.g. a `full` field alongside a smaller `preview` used for `src_field` |
 | `lightbox` | `true` | Click-to-open full-screen GLightbox modal with its own next/prev browsing |
-| `class` | *(none)* | Extra CSS class(es) added to the `.swiper.og-gallery` container |
-| `loop` | `true` | Infinite looping, applied to both the inline Swiper carousel and the GLightbox modal |
-| `pagination` | `true` | Show clickable pagination dots (inline carousel only) |
-| `navigation` | `true` | Show prev/next arrow buttons (inline carousel only) |
-| `autoplay` | *(off)* | Delay in milliseconds between auto-advances, e.g. `4000` (inline carousel only) |
+| `class` | *(none)* | Extra CSS class(es) added to the `.og-gallery` container |
+| `loop` | `true` | Infinite looping in the GLightbox modal only (the inline strip doesn't loop - it's a scrollable row, not a carousel) |
+| `navigation` | `true` | Show the strip's scroll-arrow buttons |
 | `fallback` | *(empty)* | Text shown when the key is missing, not an array, or empty |
 
 Each gallery on a page gets a unique `#og-gallery-N` id, so multiple `[og_gallery]` instances can coexist on the same page/post — each with its own scoped set of lightbox images (via GLightbox's `data-gallery` grouping), so clicking through one gallery's modal won't wander into another's.
