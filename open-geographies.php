@@ -762,15 +762,17 @@ class Open_Geographies
         static $counter = 0;
 
         $atts = shortcode_atts([
-            'key'        => '',
-            'src_field'  => 'src',
-            'alt_field'  => 'alt',
-            'class'      => '',
-            'loop'       => 'true',
-            'pagination' => 'true',
-            'navigation' => 'true',
-            'autoplay'   => '',
-            'fallback'   => '',
+            'key'                => '',
+            'src_field'          => 'src',
+            'alt_field'          => 'alt',
+            'lightbox_src_field' => '', // defaults to src_field when blank
+            'class'              => '',
+            'loop'               => 'true',
+            'pagination'         => 'true',
+            'navigation'         => 'true',
+            'autoplay'           => '',
+            'lightbox'           => 'true',
+            'fallback'           => '',
         ], $atts);
 
         if ($atts['key'] === '') return '';
@@ -778,14 +780,18 @@ class Open_Geographies
         $items = self::resolve($atts['key']);
         if (! is_array($items) || empty($items)) return esc_html($atts['fallback']);
 
+        $lightbox_field = $atts['lightbox_src_field'] !== '' ? $atts['lightbox_src_field'] : $atts['src_field'];
+
         $slides = [];
         foreach ($items as $item) {
             if (is_string($item)) {
-                $slides[] = ['src' => $item, 'alt' => ''];
+                $slides[] = ['src' => $item, 'lightbox_src' => $item, 'alt' => ''];
             } elseif (is_array($item)) {
+                $src = (string) ($item[$atts['src_field']] ?? '');
                 $slides[] = [
-                    'src' => (string) ($item[$atts['src_field']] ?? ''),
-                    'alt' => (string) ($item[$atts['alt_field']] ?? ''),
+                    'src'          => $src,
+                    'lightbox_src' => (string) ($item[$lightbox_field] ?? $src),
+                    'alt'          => (string) ($item[$atts['alt_field']] ?? ''),
                 ];
             }
         }
@@ -793,16 +799,22 @@ class Open_Geographies
         if (empty($slides)) return esc_html($atts['fallback']);
 
         $inline_style = self::enqueue_swiper_assets();
+        $lightbox_on  = filter_var($atts['lightbox'], FILTER_VALIDATE_BOOLEAN);
+        if ($lightbox_on) {
+            $inline_style .= self::enqueue_glightbox_assets();
+        }
 
         $counter++;
-        $id = 'og-gallery-' . $counter;
+        $id           = 'og-gallery-' . $counter;
+        $gallery_group = $id; // groups this instance's slides for GLightbox's own next/prev
 
         $show_pagination = filter_var($atts['pagination'], FILTER_VALIDATE_BOOLEAN);
         $show_navigation = filter_var($atts['navigation'], FILTER_VALIDATE_BOOLEAN);
         $autoplay        = absint($atts['autoplay']);
+        $loop_on         = filter_var($atts['loop'], FILTER_VALIDATE_BOOLEAN);
 
         $config = [
-            'loop'       => filter_var($atts['loop'], FILTER_VALIDATE_BOOLEAN),
+            'loop'       => $loop_on,
             'pagination' => $show_pagination ? ['el' => '.swiper-pagination', 'clickable' => true] : false,
             'navigation' => $show_navigation ? ['nextEl' => '.swiper-button-next', 'prevEl' => '.swiper-button-prev'] : false,
         ];
@@ -810,13 +822,29 @@ class Open_Geographies
             $config['autoplay'] = ['delay' => $autoplay];
         }
 
+        $glightbox_config = [
+            'selector' => '#' . $id . ' .og-gallery__lightbox-link',
+            'loop'     => $loop_on,
+        ];
+
         ob_start();
     ?>
         <?php echo $inline_style; ?>
         <div class="<?php echo esc_attr(trim('swiper og-gallery ' . $atts['class'])); ?>" id="<?php echo esc_attr($id); ?>">
             <div class="swiper-wrapper">
                 <?php foreach ($slides as $slide) : ?>
-                    <div class="swiper-slide"><img src="<?php echo esc_url($slide['src']); ?>" alt="<?php echo esc_attr($slide['alt']); ?>"></div>
+                    <div class="swiper-slide">
+                        <?php if ($lightbox_on) : ?>
+                            <?php // data-type="image" is required, not decorative: GLightbox guesses type from the URL's
+                            // file extension, and image URLs from APIs are often extensionless (IIIF image URLs, for
+                            // example) - without this, GLightbox silently renders those as an empty video iframe. ?>
+                            <a href="<?php echo esc_url($slide['lightbox_src']); ?>" class="og-gallery__lightbox-link" data-gallery="<?php echo esc_attr($gallery_group); ?>" data-title="<?php echo esc_attr($slide['alt']); ?>" data-type="image">
+                                <img src="<?php echo esc_url($slide['src']); ?>" alt="<?php echo esc_attr($slide['alt']); ?>">
+                            </a>
+                        <?php else : ?>
+                            <img src="<?php echo esc_url($slide['src']); ?>" alt="<?php echo esc_attr($slide['alt']); ?>">
+                        <?php endif; ?>
+                    </div>
                 <?php endforeach; ?>
             </div>
             <?php if ($show_pagination) : ?><div class="swiper-pagination"></div><?php endif; ?>
@@ -828,9 +856,16 @@ class Open_Geographies
         <script>
             (function() {
                 function initOgGallery() {
-                    new Swiper('#<?php echo esc_js($id); ?>', <?php echo wp_json_encode($config, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>);
+                    var mainEl = document.getElementById(<?php echo wp_json_encode($id); ?>);
+                    new Swiper(mainEl, <?php echo wp_json_encode($config, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>);
+
+                    <?php if ($lightbox_on) : ?>
+                    if (window.GLightbox) {
+                        GLightbox(<?php echo wp_json_encode($glightbox_config, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>);
+                    }
+                    <?php endif; ?>
                 }
-                if (window.Swiper) {
+                if (window.Swiper<?php echo $lightbox_on ? ' && window.GLightbox' : ''; ?>) {
                     initOgGallery();
                 } else {
                     document.addEventListener('DOMContentLoaded', initOgGallery);
@@ -968,6 +1003,10 @@ class Open_Geographies
         if (! is_singular('og_item') && ! $has_gallery) return;
 
         self::enqueue_swiper_assets();
+        // [og_gallery]'s lightbox defaults to on; this can't see a per-instance
+        // lightbox="false" override, same imprecision as the Swiper check above -
+        // sc_gallery() itself is the guarantee either way (see its docblock).
+        self::enqueue_glightbox_assets();
     }
 
     /**
@@ -991,6 +1030,28 @@ class Open_Geographies
         if (! did_action('wp_head')) return '';
 
         return sprintf('<link rel="stylesheet" id="swiper-css" href="%s">' . "\n", esc_url('https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css'));
+    }
+
+    // ── GLightbox ─────────────────────────────
+
+    /**
+     * Registers/enqueues GLightbox, used for [og_gallery]'s click-to-open modal.
+     * Same eager-then-guaranteed enqueue pattern as enqueue_swiper_assets() above -
+     * see that method's docblock for why the inline <link> fallback exists.
+     */
+    private static function enqueue_glightbox_assets(): string
+    {
+        if (! wp_script_is('og-glightbox', 'enqueued')) {
+            wp_enqueue_script('og-glightbox', 'https://cdn.jsdelivr.net/npm/glightbox/dist/js/glightbox.min.js', [], '3', ['strategy' => 'defer', 'in_footer' => true]);
+        }
+
+        if (wp_style_is('og-glightbox', 'enqueued')) return '';
+
+        wp_enqueue_style('og-glightbox', 'https://cdn.jsdelivr.net/npm/glightbox/dist/css/glightbox.min.css', [], '3');
+
+        if (! did_action('wp_head')) return '';
+
+        return sprintf('<link rel="stylesheet" id="og-glightbox-css" href="%s">' . "\n", esc_url('https://cdn.jsdelivr.net/npm/glightbox/dist/css/glightbox.min.css'));
     }
 
     // ── Google Maps ────────────────────────────
@@ -1080,7 +1141,7 @@ class Open_Geographies
             '[og_if key="is_active"]…[/og_if]'                 => 'Conditional block. Add <code>equals="x"</code> or <code>not="true"</code>.',
             '[og_data var="photos" key="gallery"]'              => 'Writes a JS variable for use in Custom HTML blocks.',
             '[og_image key="images.hero" alt_key="images.alt"]' => 'Renders an <code>&lt;img&gt;</code> from an API URL.',
-            '[og_gallery key="photographs"]'                    => 'Renders a Swiper gallery from an array of image URLs or objects. Options: <code>src_field</code>, <code>alt_field</code> (default <code>src</code>/<code>alt</code>), <code>loop</code>, <code>pagination</code>, <code>navigation</code>, <code>autoplay</code> (ms), <code>class</code>, <code>fallback</code>.',
+            '[og_gallery key="photographs"]'                    => 'Renders a Swiper gallery from an array of image URLs or objects. Clicking a slide opens a full-screen GLightbox modal to keep browsing (next/prev, swipe, arrow keys) - set <code>lightbox="false"</code> to disable. Options: <code>src_field</code>, <code>alt_field</code> (default <code>src</code>/<code>alt</code>), <code>lightbox_src_field</code> (higher-res image for the modal; defaults to <code>src_field</code>), <code>loop</code>, <code>pagination</code>, <code>navigation</code>, <code>autoplay</code> (ms), <code>class</code>, <code>fallback</code>.',
             '[og_map key="geometry"]'                           => 'Renders a Google Map with a marker from a GeoJSON Point geometry. Requires a Google Maps API key under Settings. Options: <code>zoom</code>, <code>height</code>, <code>width</code>, <code>marker_title</code> (a key path for the marker tooltip), <code>class</code>, <code>fallback</code>.',
             '[og_error]'                                        => 'Displays the API error message when the fetch fails.',
         ];
