@@ -4,7 +4,7 @@
  * Plugin Name:       Open Geographies
  * Plugin URI:        https://github.com/ecds/open-geographies-wp
  * Description:       Fetches data from an Open Geographies compliant API based on the current URL path and exposes response fields via shortcodes.
- * Version:           0.0.4
+ * Version:           0.0.5
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            Your Name
@@ -20,7 +20,7 @@ defined('ABSPATH') || exit;
 // 1.  Bootstrap
 // ─────────────────────────────────────────────
 
-define('OG_VERSION',    '0.0.4');
+define('OG_VERSION',    '0.0.5');
 define('OG_OPTION_KEY', 'og_settings');
 define('OG_CACHE_TTL',  60);
 define('OG_CRON_HOOK',  'og_sync_cron');
