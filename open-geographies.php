@@ -4,7 +4,7 @@
  * Plugin Name:       Open Geographies
  * Plugin URI:        https://github.com/ecds/open-geographies-wp
  * Description:       Fetches data from an Open Geographies compliant API based on the current URL path and exposes response fields via shortcodes.
- * Version:           0.0.5
+ * Version:           0.0.6
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            Your Name
@@ -20,7 +20,7 @@ defined('ABSPATH') || exit;
 // 1.  Bootstrap
 // ─────────────────────────────────────────────
 
-define('OG_VERSION',    '0.0.5');
+define('OG_VERSION',    '0.0.6');
 define('OG_OPTION_KEY', 'og_settings');
 define('OG_CACHE_TTL',  60);
 define('OG_CRON_HOOK',  'og_sync_cron');
@@ -837,7 +837,8 @@ class Open_Geographies
                         <?php if ($lightbox_on) : ?>
                             <?php // data-type="image" is required, not decorative: GLightbox guesses type from the URL's
                             // file extension, and image URLs from APIs are often extensionless (IIIF image URLs, for
-                            // example) - without this, GLightbox silently renders those as an empty video iframe. ?>
+                            // example) - without this, GLightbox silently renders those as an empty video iframe. 
+                            ?>
                             <a href="<?php echo esc_url($slide['lightbox_src']); ?>" class="og-gallery__lightbox-link" data-gallery="<?php echo esc_attr($gallery_group); ?>" data-title="<?php echo esc_attr($slide['alt']); ?>" data-type="image">
                                 <img src="<?php echo esc_url($slide['src']); ?>" alt="<?php echo esc_attr($slide['alt']); ?>">
                             </a>
@@ -860,9 +861,9 @@ class Open_Geographies
                     new Swiper(mainEl, <?php echo wp_json_encode($config, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>);
 
                     <?php if ($lightbox_on) : ?>
-                    if (window.GLightbox) {
-                        GLightbox(<?php echo wp_json_encode($glightbox_config, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>);
-                    }
+                        if (window.GLightbox) {
+                            GLightbox(<?php echo wp_json_encode($glightbox_config, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>);
+                        }
                     <?php endif; ?>
                 }
                 if (window.Swiper<?php echo $lightbox_on ? ' && window.GLightbox' : ''; ?>) {
