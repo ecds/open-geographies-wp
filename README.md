@@ -226,6 +226,8 @@ Renders a `<pre>` block with pretty-printed JSON. Remove from production templat
 
 Renders a complete [Swiper](https://swiperjs.com/) gallery — slides, pagination dots, and prev/next arrows — directly from an API array. No template markup or inline `<script>` needed; the shortcode outputs the full `.swiper` structure and its own scoped init script, and the plugin automatically enqueues the Swiper JS/CSS on any page where this shortcode is used (or on `og_item` singles).
 
+Clicking a slide opens it in a full-screen [GLightbox](https://biati-digital.github.io/glightbox/) modal, so visitors can keep browsing (next/prev, swipe, arrow keys) without leaving it. This is a second library rather than reusing the same Swiper instance on purpose — GLightbox is purpose-built for exactly this click-to-open-a-modal pattern, whereas getting a *second*, dynamically-constructed Swiper instance to reliably open positioned at an arbitrary slide (inside a container that was `display:none` a moment earlier) turned out to be genuinely unreliable. The plugin enqueues GLightbox's JS/CSS from CDN alongside Swiper's, the same way. Disable with `lightbox="false"` if you just want the inline carousel.
+
 `key` must resolve to an array of either:
 
 - **plain URL strings**:
@@ -245,14 +247,16 @@ Renders a complete [Swiper](https://swiperjs.com/) gallery — slides, paginatio
 | `key` | — | Dot-notation path to the array (required) |
 | `src_field` | `src` | Object key to read the image URL from |
 | `alt_field` | `alt` | Object key to read the alt text from |
+| `lightbox_src_field` | *(= `src_field`)* | Object key to read a higher-resolution image from for the GLightbox modal, e.g. a `full` field alongside a smaller `preview` used for `src_field` |
+| `lightbox` | `true` | Click-to-open full-screen GLightbox modal with its own next/prev browsing |
 | `class` | *(none)* | Extra CSS class(es) added to the `.swiper.og-gallery` container |
-| `loop` | `true` | Infinite looping |
-| `pagination` | `true` | Show clickable pagination dots |
-| `navigation` | `true` | Show prev/next arrow buttons |
-| `autoplay` | *(off)* | Delay in milliseconds between auto-advances, e.g. `4000` |
+| `loop` | `true` | Infinite looping, applied to both the inline Swiper carousel and the GLightbox modal |
+| `pagination` | `true` | Show clickable pagination dots (inline carousel only) |
+| `navigation` | `true` | Show prev/next arrow buttons (inline carousel only) |
+| `autoplay` | *(off)* | Delay in milliseconds between auto-advances, e.g. `4000` (inline carousel only) |
 | `fallback` | *(empty)* | Text shown when the key is missing, not an array, or empty |
 
-Each gallery on a page gets a unique `#og-gallery-N` id, so multiple `[og_gallery]` instances can coexist on the same page/post.
+Each gallery on a page gets a unique `#og-gallery-N` id, so multiple `[og_gallery]` instances can coexist on the same page/post — each with its own scoped set of lightbox images (via GLightbox's `data-gallery` grouping), so clicking through one gallery's modal won't wander into another's.
 
 ---
 
