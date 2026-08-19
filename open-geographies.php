@@ -4,7 +4,7 @@
  * Plugin Name:       Open Geographies
  * Plugin URI:        https://github.com/ecds/open-geographies-wp
  * Description:       Fetches data from an Open Geographies compliant API based on the current URL path and exposes response fields via shortcodes.
- * Version:           0.0.6
+ * Version:           0.0.7
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            Your Name
@@ -20,7 +20,7 @@ defined('ABSPATH') || exit;
 // 1.  Bootstrap
 // ─────────────────────────────────────────────
 
-define('OG_VERSION',    '0.0.6');
+define('OG_VERSION',    '0.0.7');
 define('OG_OPTION_KEY', 'og_settings');
 define('OG_CACHE_TTL',  60);
 define('OG_CRON_HOOK',  'og_sync_cron');
@@ -64,7 +64,7 @@ class Open_Geographies
         add_shortcode('og_map',     [__CLASS__, 'sc_map']);
         add_shortcode('og_error',   [__CLASS__, 'sc_error']);
 
-        add_action('wp_enqueue_scripts',  [__CLASS__, 'enqueue_swiper']);
+        add_action('wp_enqueue_scripts',  [__CLASS__, 'enqueue_og_gallery_assets']);
         add_filter('post_thumbnail_html', [__CLASS__, 'filter_thumbnail'], 10, 2);
 
         self::register_cpt();
@@ -757,6 +757,15 @@ class Open_Geographies
         return sprintf('<img src="%s" alt="%s"%s>', esc_url($src), esc_attr($alt), $atts['class'] ? ' class="' . esc_attr($atts['class']) . '"' : '');
     }
 
+    /**
+     * [og_gallery key="photographs"]
+     * Plain horizontally-scrollable strip of thumbnails (no carousel library -
+     * just CSS overflow-x + two scroll-arrow buttons), each opening a
+     * full-screen GLightbox modal to keep browsing. See sc_gallery()'s history
+     * for context: this previously used Swiper for the inline strip too, but
+     * that turned out to be more machinery than the design called for once the
+     * reference layout turned out to be a plain scrollable row, not a carousel.
+     */
     public static function sc_gallery(array $atts): string
     {
         static $counter = 0;
@@ -767,10 +776,8 @@ class Open_Geographies
             'alt_field'          => 'alt',
             'lightbox_src_field' => '', // defaults to src_field when blank
             'class'              => '',
-            'loop'               => 'true',
-            'pagination'         => 'true',
-            'navigation'         => 'true',
-            'autoplay'           => '',
+            'loop'               => 'true', // GLightbox modal only - wrap from last image back to first
+            'navigation'         => 'true', // show the strip's scroll-arrow buttons
             'lightbox'           => 'true',
             'fallback'           => '',
         ], $atts);
@@ -798,29 +805,20 @@ class Open_Geographies
         $slides = array_values(array_filter($slides, fn($s) => $s['src'] !== ''));
         if (empty($slides)) return esc_html($atts['fallback']);
 
-        $inline_style = self::enqueue_swiper_assets();
         $lightbox_on  = filter_var($atts['lightbox'], FILTER_VALIDATE_BOOLEAN);
-        if ($lightbox_on) {
-            $inline_style .= self::enqueue_glightbox_assets();
-        }
+        $inline_style = $lightbox_on ? self::enqueue_glightbox_assets() : '';
 
         $counter++;
-        $id           = 'og-gallery-' . $counter;
+        $id            = 'og-gallery-' . $counter;
         $gallery_group = $id; // groups this instance's slides for GLightbox's own next/prev
 
-        $show_pagination = filter_var($atts['pagination'], FILTER_VALIDATE_BOOLEAN);
         $show_navigation = filter_var($atts['navigation'], FILTER_VALIDATE_BOOLEAN);
-        $autoplay        = absint($atts['autoplay']);
         $loop_on         = filter_var($atts['loop'], FILTER_VALIDATE_BOOLEAN);
 
-        $config = [
-            'loop'       => $loop_on,
-            'pagination' => $show_pagination ? ['el' => '.swiper-pagination', 'clickable' => true] : false,
-            'navigation' => $show_navigation ? ['nextEl' => '.swiper-button-next', 'prevEl' => '.swiper-button-prev'] : false,
+        $glightbox_config = [
+            'selector' => '#' . $id . ' .og-gallery__lightbox-link',
+            'loop'     => $loop_on,
         ];
-        if ($autoplay > 0) {
-            $config['autoplay'] = ['delay' => $autoplay];
-        }
 
         $glightbox_config = [
             'selector' => '#' . $id . ' .og-gallery__lightbox-link',
@@ -830,35 +828,40 @@ class Open_Geographies
         ob_start();
     ?>
         <?php echo $inline_style; ?>
-        <div class="<?php echo esc_attr(trim('swiper og-gallery ' . $atts['class'])); ?>" id="<?php echo esc_attr($id); ?>">
-            <div class="swiper-wrapper">
+        <div class="<?php echo esc_attr(trim('og-gallery ' . $atts['class'])); ?>" id="<?php echo esc_attr($id); ?>">
+            <?php if ($show_navigation) : ?><button type="button" class="og-gallery__nav og-gallery__nav--prev" aria-label="<?php esc_attr_e('Previous', 'open-geographies'); ?>">&#8249;</button><?php endif; ?>
+            <div class="og-gallery__track">
                 <?php foreach ($slides as $slide) : ?>
-                    <div class="swiper-slide">
-                        <?php if ($lightbox_on) : ?>
-                            <?php // data-type="image" is required, not decorative: GLightbox guesses type from the URL's
-                            // file extension, and image URLs from APIs are often extensionless (IIIF image URLs, for
-                            // example) - without this, GLightbox silently renders those as an empty video iframe. 
-                            ?>
-                            <a href="<?php echo esc_url($slide['lightbox_src']); ?>" class="og-gallery__lightbox-link" data-gallery="<?php echo esc_attr($gallery_group); ?>" data-title="<?php echo esc_attr($slide['alt']); ?>" data-type="image">
-                                <img src="<?php echo esc_url($slide['src']); ?>" alt="<?php echo esc_attr($slide['alt']); ?>">
-                            </a>
-                        <?php else : ?>
-                            <img src="<?php echo esc_url($slide['src']); ?>" alt="<?php echo esc_attr($slide['alt']); ?>">
-                        <?php endif; ?>
-                    </div>
+                    <?php if ($lightbox_on) : ?>
+                        <?php // data-type="image" is required, not decorative: GLightbox guesses type from the URL's
+                        // file extension, and image URLs from APIs are often extensionless (IIIF image URLs, for
+                        // example) - without this, GLightbox silently renders those as an empty video iframe.
+                        ?>
+                        <a href="<?php echo esc_url($slide['lightbox_src']); ?>" class="og-gallery__lightbox-link" data-gallery="<?php echo esc_attr($gallery_group); ?>" data-title="<?php echo esc_attr($slide['alt']); ?>" data-type="image">
+                            <img src="<?php echo esc_url($slide['src']); ?>" alt="<?php echo esc_attr($slide['alt']); ?>" loading="lazy">
+                        </a>
+                    <?php else : ?>
+                        <img src="<?php echo esc_url($slide['src']); ?>" alt="<?php echo esc_attr($slide['alt']); ?>" loading="lazy">
+                    <?php endif; ?>
                 <?php endforeach; ?>
             </div>
-            <?php if ($show_pagination) : ?><div class="swiper-pagination"></div><?php endif; ?>
-            <?php if ($show_navigation) : ?>
-                <div class="swiper-button-prev"></div>
-                <div class="swiper-button-next"></div>
-            <?php endif; ?>
+            <?php if ($show_navigation) : ?><button type="button" class="og-gallery__nav og-gallery__nav--next" aria-label="<?php esc_attr_e('Next', 'open-geographies'); ?>">&#8250;</button><?php endif; ?>
         </div>
         <script>
             (function() {
                 function initOgGallery() {
-                    var mainEl = document.getElementById(<?php echo wp_json_encode($id); ?>);
-                    new Swiper(mainEl, <?php echo wp_json_encode($config, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>);
+                    var root = document.getElementById(<?php echo wp_json_encode($id); ?>);
+                    var track = root.querySelector('.og-gallery__track');
+
+                    <?php if ($show_navigation) : ?>
+                        function scrollByAmount(dir) {
+                            // One "page" at a time: roughly the visible width, so Prev/Next
+                            // always advances by a full screenful rather than a fixed pixel guess.
+                            track.scrollBy({ left: dir * track.clientWidth * 0.9, behavior: 'smooth' });
+                        }
+                        root.querySelector('.og-gallery__nav--prev').addEventListener('click', function() { scrollByAmount(-1); });
+                        root.querySelector('.og-gallery__nav--next').addEventListener('click', function() { scrollByAmount(1); });
+                    <?php endif; ?>
 
                     <?php if ($lightbox_on) : ?>
                         if (window.GLightbox) {
@@ -866,11 +869,19 @@ class Open_Geographies
                         }
                     <?php endif; ?>
                 }
-                if (window.Swiper<?php echo $lightbox_on ? ' && window.GLightbox' : ''; ?>) {
-                    initOgGallery();
-                } else {
-                    document.addEventListener('DOMContentLoaded', initOgGallery);
-                }
+                <?php if ($lightbox_on) : ?>
+                    if (window.GLightbox) {
+                        initOgGallery();
+                    } else {
+                        document.addEventListener('DOMContentLoaded', initOgGallery);
+                    }
+                <?php else : ?>
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', initOgGallery);
+                    } else {
+                        initOgGallery();
+                    }
+                <?php endif; ?>
             })();
         </script>
     <?php
@@ -994,43 +1005,43 @@ class Open_Geographies
         return sprintf('<img src="%s" alt="%s" class="wp-post-image og-api-thumbnail">', esc_url($src), esc_attr($alt));
     }
 
-    // ── Swiper ────────────────────────────────
+    // ── og_gallery assets ─────────────────────
 
-    public static function enqueue_swiper(): void
+    public static function enqueue_og_gallery_assets(): void
     {
         global $post;
         $has_gallery = $post instanceof WP_Post && has_shortcode($post->post_content, 'og_gallery');
 
         if (! is_singular('og_item') && ! $has_gallery) return;
 
-        self::enqueue_swiper_assets();
         // [og_gallery]'s lightbox defaults to on; this can't see a per-instance
-        // lightbox="false" override, same imprecision as the Swiper check above -
-        // sc_gallery() itself is the guarantee either way (see its docblock).
+        // lightbox="false" override - sc_gallery() itself is the guarantee
+        // either way (see its docblock), this is just an early head-start.
         self::enqueue_glightbox_assets();
     }
 
+    // ── GLightbox ─────────────────────────────
+
     /**
-     * Registers/enqueues the Swiper assets. Called eagerly on wp_enqueue_scripts when the
-     * shortcode is detectable in post_content, and again from sc_gallery() itself as a
-     * guarantee for shortcodes rendered from templates, widgets, or reusable blocks that
-     * has_shortcode() above can't see. The JS is safe to enqueue late (in_footer + defer),
-     * but if wp_head has already printed, a late style enqueue would never get flushed —
-     * in that case we return an inline <link> tag for sc_gallery() to output directly.
+     * Registers/enqueues GLightbox, used for [og_gallery]'s click-to-open modal.
+     * Eager-enqueued from enqueue_og_gallery_assets() when detectable, and always
+     * called again from sc_gallery() itself as a guarantee - see the "if wp_head
+     * has already printed" fallback below for why sc_gallery() needs its return
+     * value even when the eager enqueue already ran.
      */
-    private static function enqueue_swiper_assets(): string
+    private static function enqueue_glightbox_assets(): string
     {
-        if (! wp_script_is('swiper', 'enqueued')) {
-            wp_enqueue_script('swiper', 'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js', [], '11', ['strategy' => 'defer', 'in_footer' => true]);
+        if (! wp_script_is('og-glightbox', 'enqueued')) {
+            wp_enqueue_script('og-glightbox', 'https://cdn.jsdelivr.net/npm/glightbox/dist/js/glightbox.min.js', [], '3', ['strategy' => 'defer', 'in_footer' => true]);
         }
 
-        if (wp_style_is('swiper', 'enqueued')) return '';
+        if (wp_style_is('og-glightbox', 'enqueued')) return '';
 
-        wp_enqueue_style('swiper', 'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css', [], '11');
+        wp_enqueue_style('og-glightbox', 'https://cdn.jsdelivr.net/npm/glightbox/dist/css/glightbox.min.css', [], '3');
 
         if (! did_action('wp_head')) return '';
 
-        return sprintf('<link rel="stylesheet" id="swiper-css" href="%s">' . "\n", esc_url('https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css'));
+        return sprintf('<link rel="stylesheet" id="og-glightbox-css" href="%s">' . "\n", esc_url('https://cdn.jsdelivr.net/npm/glightbox/dist/css/glightbox.min.css'));
     }
 
     // ── GLightbox ─────────────────────────────
@@ -1061,7 +1072,7 @@ class Open_Geographies
      * Registers/enqueues the Google Maps JS API, keyed to the configured API key. Always
      * called from within sc_map() itself (never from a content-scanning hook) so it fires
      * regardless of whether the shortcode came from post content, a template, or a widget —
-     * see the equivalent Swiper fix above for why that distinction matters.
+     * see enqueue_glightbox_assets() above for why that distinction matters.
      *
      * Uses Google's own `callback` query param rather than defer/DOMContentLoaded timing:
      * the callback fires exactly when the API is ready, no matter how the script tag loads.
@@ -1142,7 +1153,7 @@ class Open_Geographies
             '[og_if key="is_active"]…[/og_if]'                 => 'Conditional block. Add <code>equals="x"</code> or <code>not="true"</code>.',
             '[og_data var="photos" key="gallery"]'              => 'Writes a JS variable for use in Custom HTML blocks.',
             '[og_image key="images.hero" alt_key="images.alt"]' => 'Renders an <code>&lt;img&gt;</code> from an API URL.',
-            '[og_gallery key="photographs"]'                    => 'Renders a Swiper gallery from an array of image URLs or objects. Clicking a slide opens a full-screen GLightbox modal to keep browsing (next/prev, swipe, arrow keys) - set <code>lightbox="false"</code> to disable. Options: <code>src_field</code>, <code>alt_field</code> (default <code>src</code>/<code>alt</code>), <code>lightbox_src_field</code> (higher-res image for the modal; defaults to <code>src_field</code>), <code>loop</code>, <code>pagination</code>, <code>navigation</code>, <code>autoplay</code> (ms), <code>class</code>, <code>fallback</code>.',
+            '[og_gallery key="photographs"]'                    => 'Renders a horizontally-scrollable strip of thumbnails from an array of image URLs or objects, with optional scroll-arrow buttons. Clicking a thumbnail opens a full-screen GLightbox modal to keep browsing (next/prev, swipe, arrow keys) - set <code>lightbox="false"</code> to disable. Options: <code>src_field</code>, <code>alt_field</code> (default <code>src</code>/<code>alt</code>), <code>lightbox_src_field</code> (higher-res image for the modal; defaults to <code>src_field</code>), <code>loop</code> (modal only), <code>navigation</code> (scroll-arrow buttons), <code>class</code>, <code>fallback</code>.',
             '[og_map key="geometry"]'                           => 'Renders a Google Map with a marker from a GeoJSON Point geometry. Requires a Google Maps API key under Settings. Options: <code>zoom</code>, <code>height</code>, <code>width</code>, <code>marker_title</code> (a key path for the marker tooltip), <code>class</code>, <code>fallback</code>.',
             '[og_error]'                                        => 'Displays the API error message when the fetch fails.',
         ];
