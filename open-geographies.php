@@ -820,6 +820,11 @@ class Open_Geographies
             'loop'     => $loop_on,
         ];
 
+        $glightbox_config = [
+            'selector' => '#' . $id . ' .og-gallery__lightbox-link',
+            'loop'     => $loop_on,
+        ];
+
         ob_start();
     ?>
         <?php echo $inline_style; ?>
@@ -1023,6 +1028,28 @@ class Open_Geographies
      * called again from sc_gallery() itself as a guarantee - see the "if wp_head
      * has already printed" fallback below for why sc_gallery() needs its return
      * value even when the eager enqueue already ran.
+     */
+    private static function enqueue_glightbox_assets(): string
+    {
+        if (! wp_script_is('og-glightbox', 'enqueued')) {
+            wp_enqueue_script('og-glightbox', 'https://cdn.jsdelivr.net/npm/glightbox/dist/js/glightbox.min.js', [], '3', ['strategy' => 'defer', 'in_footer' => true]);
+        }
+
+        if (wp_style_is('og-glightbox', 'enqueued')) return '';
+
+        wp_enqueue_style('og-glightbox', 'https://cdn.jsdelivr.net/npm/glightbox/dist/css/glightbox.min.css', [], '3');
+
+        if (! did_action('wp_head')) return '';
+
+        return sprintf('<link rel="stylesheet" id="og-glightbox-css" href="%s">' . "\n", esc_url('https://cdn.jsdelivr.net/npm/glightbox/dist/css/glightbox.min.css'));
+    }
+
+    // ── GLightbox ─────────────────────────────
+
+    /**
+     * Registers/enqueues GLightbox, used for [og_gallery]'s click-to-open modal.
+     * Same eager-then-guaranteed enqueue pattern as enqueue_swiper_assets() above -
+     * see that method's docblock for why the inline <link> fallback exists.
      */
     private static function enqueue_glightbox_assets(): string
     {

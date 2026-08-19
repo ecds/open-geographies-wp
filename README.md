@@ -230,6 +230,8 @@ Clicking a thumbnail opens a full-screen [GLightbox](https://biati-digital.githu
 
 *(This previously rendered a [Swiper](https://swiperjs.com/) carousel for the inline strip too, with a second Swiper instance for the modal. Swiper's gone now — the actual design called for a plain scrollable row, not a carousel, and a dynamically-constructed second Swiper instance for the modal turned out to be unreliable in practice: an instance built the instant its container becomes visible doesn't reliably track its own slides. GLightbox doesn't have that problem — it's purpose-built for exactly the click-to-open-a-modal pattern.)*
 
+Clicking a slide opens it in a full-screen [GLightbox](https://biati-digital.github.io/glightbox/) modal, so visitors can keep browsing (next/prev, swipe, arrow keys) without leaving it. This is a second library rather than reusing the same Swiper instance on purpose — GLightbox is purpose-built for exactly this click-to-open-a-modal pattern, whereas getting a *second*, dynamically-constructed Swiper instance to reliably open positioned at an arbitrary slide (inside a container that was `display:none` a moment earlier) turned out to be genuinely unreliable. The plugin enqueues GLightbox's JS/CSS from CDN alongside Swiper's, the same way. Disable with `lightbox="false"` if you just want the inline carousel.
+
 `key` must resolve to an array of either:
 
 - **plain URL strings**:
