@@ -4,7 +4,7 @@
  * Plugin Name:       Open Geographies
  * Plugin URI:        https://github.com/ecds/open-geographies-wp
  * Description:       Fetches data from an Open Geographies compliant API based on the current URL path and exposes response fields via shortcodes.
- * Version:           0.0.7
+ * Version:           0.0.8
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            Your Name
@@ -20,7 +20,7 @@ defined('ABSPATH') || exit;
 // 1.  Bootstrap
 // ─────────────────────────────────────────────
 
-define('OG_VERSION',    '0.0.7');
+define('OG_VERSION',    '0.0.8');
 define('OG_OPTION_KEY', 'og_settings');
 define('OG_CACHE_TTL',  60);
 define('OG_CRON_HOOK',  'og_sync_cron');
@@ -146,7 +146,7 @@ class Open_Geographies
             ],
             'google_maps_api_key' => [
                 'label'       => __('Google Maps API Key', 'open-geographies'),
-                'description' => __('Used by <code>[og_map]</code> to render GeoJSON Point geometries. This key is exposed client-side in page source, so restrict it by HTTP referrer in the Google Cloud Console.', 'open-geographies'),
+                'description' => __('Used by <code>[og_map]</code> to render a Point location (GeoJSON via <code>key</code>, or two plain scalars via <code>lat_key</code>/<code>lng_key</code>). This key is exposed client-side in page source, so restrict it by HTTP referrer in the Google Cloud Console.', 'open-geographies'),
                 'type'        => 'text',
                 'section'     => 'og_main_section',
             ],
@@ -888,21 +888,26 @@ class Open_Geographies
         return ob_get_clean();
     }
 
-    public static function sc_map(array $atts): string
+    /**
+     * Reads a Point location two ways, since the two API generations this
+     * plugin talks to disagree on the shape: OG v0 exposes a raw GeoJSON
+     * Point (`{type: "Point", coordinates: [lng, lat]}`) under one `key`;
+     * OG v1 exposes two plain scalars instead (e.g. `geo.point.lat` /
+     * `geo.point.lon` - no GeoJSON at all), reached via `lat_key`/`lng_key`.
+     * `lat_key`/`lng_key` win if given; `key` (GeoJSON) is the fallback path
+     * so sites still pointed at a v0 endpoint keep working unchanged.
+     * Returns null on anything that doesn't resolve to two real numbers.
+     */
+    private static function resolve_point(array $atts): ?array
     {
-        static $counter = 0;
+        if ($atts['lat_key'] !== '' || $atts['lng_key'] !== '') {
+            $lat = self::resolve($atts['lat_key']);
+            $lng = self::resolve($atts['lng_key']);
+            if (! is_numeric($lat) || ! is_numeric($lng)) return null;
+            return [(float) $lat, (float) $lng];
+        }
 
-        $atts = shortcode_atts([
-            'key'          => '',
-            'zoom'         => '14',
-            'height'       => '400px',
-            'width'        => '100%',
-            'class'        => '',
-            'marker_title' => '',
-            'fallback'     => '',
-        ], $atts);
-
-        if ($atts['key'] === '') return '';
+        if ($atts['key'] === '') return null;
 
         $geometry = self::resolve($atts['key']);
         $coords   = is_array($geometry) ? ($geometry['coordinates'] ?? null) : null;
@@ -915,11 +920,35 @@ class Open_Geographies
             || ! is_numeric($coords[0])
             || ! is_numeric($coords[1])
         ) {
-            return esc_html($atts['fallback']);
+            return null;
         }
 
-        // GeoJSON coordinates are [longitude, latitude] — Google Maps wants {lat, lng}.
-        [$lng, $lat] = $coords;
+        // GeoJSON coordinates are [longitude, latitude] — the reverse of our [lat, lng] return.
+        return [(float) $coords[1], (float) $coords[0]];
+    }
+
+    public static function sc_map(array $atts): string
+    {
+        static $counter = 0;
+
+        $atts = shortcode_atts([
+            'key'          => '',
+            'lat_key'      => '',
+            'lng_key'      => '',
+            'zoom'         => '14',
+            'height'       => '400px',
+            'width'        => '100%',
+            'class'        => '',
+            'marker_title' => '',
+            'fallback'     => '',
+        ], $atts);
+
+        if ($atts['key'] === '' && $atts['lat_key'] === '' && $atts['lng_key'] === '') return '';
+
+        $point = self::resolve_point($atts);
+        if ($point === null) return esc_html($atts['fallback']);
+
+        [$lat, $lng] = $point;
 
         $settings = self::get_settings();
         $api_key  = trim((string) ($settings['google_maps_api_key'] ?? ''));
@@ -1154,7 +1183,7 @@ class Open_Geographies
             '[og_data var="photos" key="gallery"]'              => 'Writes a JS variable for use in Custom HTML blocks.',
             '[og_image key="images.hero" alt_key="images.alt"]' => 'Renders an <code>&lt;img&gt;</code> from an API URL.',
             '[og_gallery key="photographs"]'                    => 'Renders a horizontally-scrollable strip of thumbnails from an array of image URLs or objects, with optional scroll-arrow buttons. Clicking a thumbnail opens a full-screen GLightbox modal to keep browsing (next/prev, swipe, arrow keys) - set <code>lightbox="false"</code> to disable. Options: <code>src_field</code>, <code>alt_field</code> (default <code>src</code>/<code>alt</code>), <code>lightbox_src_field</code> (higher-res image for the modal; defaults to <code>src_field</code>), <code>loop</code> (modal only), <code>navigation</code> (scroll-arrow buttons), <code>class</code>, <code>fallback</code>.',
-            '[og_map key="geometry"]'                           => 'Renders a Google Map with a marker from a GeoJSON Point geometry. Requires a Google Maps API key under Settings. Options: <code>zoom</code>, <code>height</code>, <code>width</code>, <code>marker_title</code> (a key path for the marker tooltip), <code>class</code>, <code>fallback</code>.',
+            '[og_map key="geometry"]'                           => 'Renders a Google Map with a marker from a Point location. Two ways to point it at that location: <code>key</code> for a GeoJSON Point object (OG v0: <code>{type: "Point", coordinates: [lng, lat]}</code>), or <code>lat_key</code>/<code>lng_key</code> for two plain numeric fields (OG v1, e.g. <code>lat_key="geo.point.lat" lng_key="geo.point.lon"</code>) - <code>lat_key</code>/<code>lng_key</code> win if both are set. Requires a Google Maps API key under Settings. Options: <code>zoom</code>, <code>height</code>, <code>width</code>, <code>marker_title</code> (a key path for the marker tooltip), <code>class</code>, <code>fallback</code>.',
             '[og_error]'                                        => 'Displays the API error message when the fetch fails.',
         ];
         echo '<table class="widefat striped" style="max-width:900px"><thead><tr><th>Shortcode</th><th>Description</th></tr></thead><tbody>';
